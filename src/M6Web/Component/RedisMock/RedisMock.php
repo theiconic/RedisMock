@@ -582,6 +582,62 @@ class RedisMock
 
     // Sorted set
 
+    public function zrank($key, $member)
+    {
+        $this->stopPipeline();
+        $set = $this->zrangebyscore($key, '-inf', '+inf', array('withscores' => true));
+        $this->restorePipeline();
+
+        if (isset($set[$member])) {
+            return $set[$member];
+        }
+
+        return false;
+    }
+
+    public function zcount($key, $min, $max)
+    {
+        if (!isset(self::$data[$key]) || $this->deleteOnTtlExpired($key)) {
+            return $this->returnPipedInfo(array());
+        }
+
+        $this->stopPipeline();
+        $set = $this->zrangebyscore($key, '-inf', '+inf', array('withscores' => true));
+        $this->restorePipeline();
+
+        return count($set);
+    }
+
+    public function zincrby($key, $increment, $member)
+    {
+        if (!isset(self::$data[$key]) || $this->deleteOnTtlExpired($key)) {
+            return $this->returnPipedInfo(array());
+        }
+
+        $this->stopPipeline();
+        $set = $this->zrangebyscore($key, '-inf', '+inf', array('withscores' => true));
+        $this->restorePipeline();
+
+        if (array_key_exists($member, $set)) {
+            self::$data[$key][$member] += $increment;
+        }
+
+        return 0;
+    }
+
+    public function zinterstore($key, $intersections)
+    {
+        $items = [];
+        foreach ($intersections as $section) {
+            $items[] = $this->zrange($section, 0, -1);
+        }
+
+        $items = (count($items) < 2) ? $items[0] : call_user_func_array('array_intersect', $items);
+        foreach ($items as $item) {
+            $this->zadd($key, 0, $item);
+        }
+    }
+
     public function zrange($key, $start, $stop, $withscores = false)
     {
         if (!isset(self::$data[$key]) || $this->deleteOnTtlExpired($key)) {
@@ -715,8 +771,6 @@ class RedisMock
         }
     }
 
-
-
     public function zrangebyscore($key, $min, $max, array $options = array())
     {
         return $this->zrangebyscoreHelper($key, $min, $max, $options, false);
@@ -728,9 +782,17 @@ class RedisMock
     }
 
 
-    public function zadd($key, $score, $member) {
+    public function zadd($key, $score, $member = null) {
         if (func_num_args() > 3) {
             throw new UnsupportedException('In RedisMock, `zadd` command can not set more than one member at once.');
+        }
+
+        // Handle Predis format
+        if (is_array($score)) {
+            foreach ($score as $item => $value) {
+                $member = $item;
+                $score = $value;
+            }
         }
 
         $this->deleteOnTtlExpired($key);
@@ -840,14 +902,18 @@ class RedisMock
     public function pipeline()
     {
         $this->pipeline = true;
+        return $this;
+    }
 
+    public function flushPipeline($flush = true)
+    {
+        $this->pipeline = $flush;
         return $this;
     }
 
     public function execute()
     {
         $this->pipeline = false;
-
         return $this;
     }
 
